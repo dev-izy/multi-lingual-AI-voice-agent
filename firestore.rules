@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function unchanged(field) {
+      return request.resource.data[field] == resource.data[field];
+    }
+
+    function isLanguage(value) {
+      return value in ['en', 'yo', 'ha'];
+    }
+
+    // users/{uid}
+    match /users/{uid} {
+      allow get: if isOwner(uid);
+      allow list: if false;                 // no directory of users
+
+      allow create: if isOwner(uid)
+        && request.resource.data.id == uid
+        && isLanguage(request.resource.data.preferredLanguage)
+        && request.resource.data.createdAt == request.time;
+
+      // Identity fields are set at creation and by the auth trigger only.
+      allow update: if isOwner(uid)
+        && unchanged('id')
+        && unchanged('email')
+        && unchanged('createdAt')
+        && isLanguage(request.resource.data.preferredLanguage)
+        && request.resource.data.settings.theme in ['light', 'dark', 'system'];
+
+      allow delete: if false;               // handle via an account-deletion function
+    }
+
+    // conversations/{conversationId}
+    match /conversations/{conversationId} {
+      allow read: if signedIn() && isOwner(resource.data.userId);
+
+      allow create: if isOwner(request.resource.data.userId)
+        && request.resource.data.id == conversationId
+        && isLanguage(request.resource.data.language)
+        && request.resource.data.messageCount == 0
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.title.size() <= 200;
+
+      // Only the title and rolling counters move after creation.
+      allow update: if isOwner(resource.data.userId)
+        && unchanged('userId')
+        && unchanged('createdAt')
+        && request.resource.data.title.size() <= 200;
+
+      allow delete: if isOwner(resource.data.userId);
+
+      // conversations/{conversationId}/messages/{messageId}
+      match /messages/{messageId} {
+
+        function parentConversation() {
+          return get(/databases/$(database)/documents/conversations/$(conversationId)).data;
+        }
+
+        allow read: if signedIn() && isOwner(parentConversation().userId);
+
+        // Both turns are written by the client, because the Worker has no
+        // Admin SDK. Ownership is still enforced: a user can only write into
+        // their own conversation.
+        allow create: if isOwner(request.resource.data.userId)
+          && isOwner(parentConversation().userId)
+          && request.resource.data.conversationId == conversationId
+          && request.resource.data.sender in ['user', 'assistant']
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 4000
+          && request.resource.data.source in ['text', 'voice']
+          && request.resource.data.timestamp == request.time;
+
+        // Messages are a record of what was said. Edits would desync the
+        // stored audio from the text, so they are closed off entirely.
+        allow update: if false;
+        allow delete: if isOwner(parentConversation().userId);
+      }
+    }
+
+    // Anything not matched above stays closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

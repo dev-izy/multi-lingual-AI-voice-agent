@@ -1,0 +1,105 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Palette: resist-dyed indigo on undyed cotton, with brass as the single
+ * warm accent. Dark is the default ground, light is the daylight variant
+ * of the same cloth.
+ */
+
+:root {
+  --ground: #F0EADD;        /* undyed cotton */
+  --surface: #FFFFFF;
+  --surface-sunk: #E4DCCB;
+  --line: #CFC4AE;
+
+  --text: #1C2440;
+  --text-muted: #5B6488;
+
+  --indigo: #2F49A8;        /* adire dye */
+  --indigo-deep: #1C2B6B;
+  --on-indigo: #F0EADD;
+  --brass: #B5822C;         /* the one warm note */
+
+  --danger: #9B2C2C;
+
+  --radius-bubble: 1.125rem;
+  --radius-control: 0.625rem;
+}
+
+.dark {
+  --ground: #131C3A;        /* deep indigo, not a tinted black */
+  --surface: #1B264A;
+  --surface-sunk: #0E1530;
+  --line: #2E3C6B;
+
+  --text: #E8E3D6;
+  --text-muted: #98A3C7;
+
+  --indigo: #6B85E8;
+  --indigo-deep: #3E5BC4;
+  --on-indigo: #0E1530;
+  --brass: #D9A441;
+
+  --danger: #E48C8C;
+}
+
+@layer base {
+  html {
+    background-color: var(--ground);
+    color: var(--text);
+  }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * Message text is set in Source Serif 4: it renders stacked Yorùbá tone
+   * marks (ọ̀, ẹ́) and Hausa hooked letters (ɓ ɗ ƙ ʼy) correctly, which
+   * most display faces do not. Slightly extra line-height so tone marks
+   * on the line above never collide with ascenders below.
+   */
+  .prose-speech {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 1.0625rem;
+    line-height: 1.75;
+    max-width: 62ch;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--brass);
+    outline-offset: 2px;
+  }
+}
+
+/*
+ * The orb is the one place this interface raises its voice: concentric
+ * rings spreading from the mic like a disturbed dye surface. Amplitude
+ * comes from the analyser, so the motion answers the user rather than
+ * decorating the page.
+ */
+@keyframes ripple-out {
+  from { transform: scale(1); opacity: 0.55; }
+  to   { transform: scale(2.1); opacity: 0; }
+}
+
+.orb-ripple {
+  animation: ripple-out 2.4s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orb-ripple {
+    animation: none;
+    opacity: 0.25;
+    transform: scale(1.35);
+  }
+
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}

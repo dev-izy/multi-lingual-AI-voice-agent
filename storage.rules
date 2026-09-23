@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // audio/{uid}/{conversationId}/{messageId}.mp3
+    match /audio/{uid}/{conversationId}/{clip} {
+      allow read: if isOwner(uid);
+
+      // Written by the callable function via the Admin SDK. The client
+      // rule below covers the rare case of client-side upload of a user
+      // voice note; cap it so a bad loop cannot fill the bucket.
+      allow write: if isOwner(uid)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('audio/.*');
+
+      allow delete: if isOwner(uid);
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
