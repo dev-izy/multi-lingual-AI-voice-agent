@@ -130,9 +130,11 @@ export function App(): JSX.Element {
       </aside>
 
       {/* Mobile: slide-in drawer over the chat. */}
+      {/* `invisible` (visibility: hidden) rather than aria-hidden: it takes the
+          panel out of the focus order too, so nothing inside can be tabbed to
+          while the drawer is closed. */}
       <div
-        className={`fixed inset-0 z-40 md:hidden ${drawerOpen ? '' : 'pointer-events-none'}`}
-        aria-hidden={!drawerOpen}
+        className={`fixed inset-0 z-40 md:hidden ${drawerOpen ? '' : 'invisible pointer-events-none'}`}
       >
         <div
           className={`absolute inset-0 transition-opacity duration-200 ${drawerOpen ? 'opacity-100' : 'opacity-0'}`}

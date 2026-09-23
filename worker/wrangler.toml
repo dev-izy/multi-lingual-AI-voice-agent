@@ -4,7 +4,7 @@ compatibility_date = "2024-12-01"
 
 [vars]
 FIREBASE_PROJECT_ID = "multi-lingual-ai-voice-agent"
-ALLOWED_ORIGINS = "http://localhost:5173"
+ALLOWED_ORIGINS = "http://localhost:5173,https://multi-lingual-ai-voice-agent.netlify.app"
 
 # Secrets are set in the Cloudflare dashboard or with
 # `npx wrangler secret put NAME` — never in this file:
