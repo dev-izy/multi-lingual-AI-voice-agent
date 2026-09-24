@@ -6,7 +6,7 @@ import {
   type SynthesiseResponse,
   type SynthesisResult,
 } from '../../types';
-import type { TtsProvider } from './providers';
+import type { BufferTtsProvider } from './providers';
 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64);
@@ -33,8 +33,9 @@ function remember(key: string, value: SynthesisResult): void {
   cache.set(key, value);
 }
 
-export const cloudTtsProvider: TtsProvider = {
+export const cloudTtsProvider: BufferTtsProvider = {
   id: 'cloud',
+  kind: 'buffer',
 
   isAvailable(): boolean {
     return typeof Audio !== 'undefined';
@@ -86,29 +87,5 @@ export const cloudTtsProvider: TtsProvider = {
         error instanceof Error ? error.message : 'Could not generate audio.',
       );
     }
-  },
-};
-
-/**
- * Deliberately restricted to English. `speechSynthesis` has no Yorùbá or
- * Hausa voices on any mainstream platform; passing it `yo-NG` returns an
- * English voice that reads the orthography as garbage. Silence plus an
- * explicit "no voice available" state is the better failure.
- */
-export const browserTtsProvider: TtsProvider = {
-  id: 'browser',
-
-  isAvailable(): boolean {
-    return typeof window !== 'undefined' && 'speechSynthesis' in window;
-  },
-
-  supportsLocale(): boolean {
-    return false;
-  },
-
-  synthesise(): Promise<SynthesisResult> {
-    return Promise.reject(
-      new SpeechError('unsupported-language', 'No device voice exists for this language.'),
-    );
   },
 };

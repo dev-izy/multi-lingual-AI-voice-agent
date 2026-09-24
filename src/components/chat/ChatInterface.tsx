@@ -48,11 +48,17 @@ const COPY: Record<
   },
 };
 
+const AUTOPLAY_LABEL: Record<LanguageCode, string> = {
+  en: 'Speak replies automatically',
+  yo: 'Sọ ìdáhùn fúnra rẹ̀',
+  ha: 'Karanta amsa ta atomatik',
+};
+
 /** Last N turns sent as context. Beyond this, cost rises faster than quality. */
 const HISTORY_WINDOW = 12;
 
 export function ChatInterface({ conversationId, onOpenMenu }: ChatInterfaceProps): JSX.Element {
-  const { user, language, locale, settings, setLanguage } = usePreferences();
+  const { user, language, locale, settings, setLanguage, updateSettings } = usePreferences();
   const [messages, setMessages] = useState<MessageDoc[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -163,11 +169,28 @@ export function ChatInterface({ conversationId, onOpenMenu }: ChatInterfaceProps
             <path d="M4 7h16M4 12h16M4 17h10" />
           </svg>
         </button>
-        <LanguageSwitcher
-          value={language}
-          disabled={voiceState !== 'idle'}
-          onChange={(next) => void setLanguage(next)}
-        />
+        <div className="flex items-center gap-2">
+          {/* Paid synthesis runs per reply, so autoplay is opt-in and its
+              cost is visible: free on device voices, billed otherwise. */}
+          {!tts.unsupported && (
+            <button
+              type="button"
+              onClick={() => void updateSettings({ autoPlayReplies: !settings.autoPlayReplies })}
+              aria-pressed={settings.autoPlayReplies}
+              aria-label={AUTOPLAY_LABEL[language]}
+              title={`${AUTOPLAY_LABEL[language]}${tts.isFree ? '' : ' • uses credit'}`}
+              className="rounded-[var(--radius-control)] p-1.5 transition-colors"
+              style={{ color: settings.autoPlayReplies ? 'var(--brass)' : 'var(--text-muted)' }}
+            >
+              {settings.autoPlayReplies ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
+            </button>
+          )}
+          <LanguageSwitcher
+            value={language}
+            disabled={voiceState !== 'idle'}
+            onChange={(next) => void setLanguage(next)}
+          />
+        </div>
       </header>
 
       <div ref={feedRef} className="flex-1 space-y-4 overflow-y-auto px-4 py-6">
@@ -288,5 +311,21 @@ export function ChatInterface({ conversationId, onOpenMenu }: ChatInterfaceProps
         />
       </footer>
     </div>
+  );
+}
+
+function SpeakerOnIcon(): JSX.Element {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 5 6 9H3v6h3l5 4V5zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12" />
+    </svg>
+  );
+}
+
+function SpeakerOffIcon(): JSX.Element {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 5 6 9H3v6h3l5 4V5zM17 10l4 4M21 10l-4 4" />
+    </svg>
   );
 }

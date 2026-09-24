@@ -28,12 +28,36 @@ export interface SttProvider {
   start(locale: SpeechLocale, onPartial?: (partial: TranscriptResult) => void): Promise<SttSession>;
 }
 
-export interface TtsProvider {
+interface TtsProviderBase {
   readonly id: string;
   isAvailable(): boolean;
   supportsLocale(locale: SpeechLocale): boolean;
+}
+
+/**
+ * Returns audio we play ourselves. Costs money per request, so the result
+ * is worth caching.
+ */
+export interface BufferTtsProvider extends TtsProviderBase {
+  readonly kind: 'buffer';
   synthesise(text: string, locale: SpeechLocale, signal?: AbortSignal): Promise<SynthesisResult>;
 }
+
+/**
+ * Speaks through the device itself, handing back no audio. Free, but only
+ * where the platform actually ships a voice for the language — which for
+ * now means English and nothing else we support.
+ */
+export interface LocalTtsProvider extends TtsProviderBase {
+  readonly kind: 'local';
+  speak(
+    text: string,
+    locale: SpeechLocale,
+    handlers: { onEnd: () => void; onError: (error: Error) => void },
+  ): { stop: () => void };
+}
+
+export type TtsProvider = BufferTtsProvider | LocalTtsProvider;
 
 /**
  * Ordered by preference. The first provider that is available and

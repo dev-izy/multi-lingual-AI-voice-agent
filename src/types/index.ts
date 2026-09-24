@@ -67,7 +67,10 @@ export type ThemePreference = 'light' | 'dark' | 'system';
 
 export interface UserSettings {
   theme: ThemePreference;
-  /** Speak assistant replies as soon as they arrive. */
+  /**
+   * Speak assistant replies as soon as they arrive. Off by default: paid
+   * synthesis on every reply adds up, and most replies are read, not heard.
+   */
   autoPlayReplies: boolean;
   /** Keep generated audio in Storage instead of regenerating on replay. */
   persistAudio: boolean;
@@ -77,7 +80,7 @@ export interface UserSettings {
 
 export const DEFAULT_USER_SETTINGS: Readonly<UserSettings> = {
   theme: 'dark',
-  autoPlayReplies: true,
+  autoPlayReplies: false,
   persistAudio: false,
   preferredLocale: 'en-NG',
 } as const;

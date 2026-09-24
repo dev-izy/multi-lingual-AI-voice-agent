@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { browserTtsProvider, cloudTtsProvider } from '../lib/speech/cloudTts';
+import { browserTtsProvider } from '../lib/speech/browserTts';
+import { cloudTtsProvider } from '../lib/speech/cloudTts';
 import { ProviderRegistry, type TtsProvider } from '../lib/speech/providers';
 import { SpeechError, type SpeechErrorCode, type SpeechLocale } from '../types';
 
-const registry = new ProviderRegistry<TtsProvider>([cloudTtsProvider, browserTtsProvider]);
+/**
+ * Device voices first: they are free and instant. They only claim English,
+ * so Yorùbá and Hausa fall through to the paid provider that can actually
+ * speak them.
+ */
+const registry = new ProviderRegistry<TtsProvider>([browserTtsProvider, cloudTtsProvider]);
 
 export type PlaybackStatus = 'idle' | 'loading' | 'playing';
 
@@ -13,8 +19,10 @@ export interface UseTextToSpeechReturn {
   /** Message id currently loading or playing, so each bubble can style itself. */
   activeId: string | null;
   error: { code: SpeechErrorCode; message: string } | null;
-  /** True when no provider can voice this locale — hide play buttons. */
+  /** True when nothing can voice this locale — hide play buttons. */
   unsupported: boolean;
+  /** True when this locale is voiced free by the device rather than the paid API. */
+  isFree: boolean;
   /** Synthesise if needed, then play. Calling again on the active id stops it. */
   speak: (id: string, text: string) => Promise<void>;
   stop: () => void;
@@ -26,14 +34,16 @@ export function useTextToSpeech(locale: SpeechLocale): UseTextToSpeechReturn {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [error, setError] = useState<UseTextToSpeechReturn['error']>(null);
   // Set when the server reports voice output isn't configured (no TTS key).
-  // Remembered for the session so we stop asking after every reply and the
-  // play buttons disappear.
+  // Remembered for the session so we stop asking after every reply.
   const [serverHasNoVoice, setServerHasNoVoice] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const localRef = useRef<{ stop: () => void } | null>(null);
   const mountedRef = useRef(true);
+
+  const provider = registry.resolve(locale);
 
   const releaseAudio = useCallback((): void => {
     if (audioRef.current) {
@@ -46,6 +56,8 @@ export function useTextToSpeech(locale: SpeechLocale): UseTextToSpeechReturn {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+    localRef.current?.stop();
+    localRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -67,6 +79,14 @@ export function useTextToSpeech(locale: SpeechLocale): UseTextToSpeechReturn {
     }
   }, [releaseAudio]);
 
+  const finish = useCallback((): void => {
+    if (mountedRef.current) {
+      setStatus('idle');
+      setActiveId(null);
+    }
+    releaseAudio();
+  }, [releaseAudio]);
+
   const speak = useCallback(
     async (id: string, text: string): Promise<void> => {
       // Tapping play on the message that's already talking means "stop".
@@ -77,7 +97,6 @@ export function useTextToSpeech(locale: SpeechLocale): UseTextToSpeechReturn {
 
       stop();
 
-      const provider = registry.resolve(locale);
       if (!provider) {
         setError({
           code: 'unsupported-language',
@@ -86,11 +105,26 @@ export function useTextToSpeech(locale: SpeechLocale): UseTextToSpeechReturn {
         return;
       }
 
-      const controller = new AbortController();
-      abortRef.current = controller;
-
       setError(null);
       setActiveId(id);
+
+      // Device voices: no request, no cost, no loading state.
+      if (provider.kind === 'local') {
+        setStatus('playing');
+        localRef.current = provider.speak(text, locale, {
+          onEnd: finish,
+          onError: (caught) => {
+            if (mountedRef.current) {
+              setError({ code: 'provider-error', message: caught.message });
+            }
+            finish();
+          },
+        });
+        return;
+      }
+
+      const controller = new AbortController();
+      abortRef.current = controller;
       setStatus('loading');
 
       try {
@@ -102,26 +136,16 @@ export function useTextToSpeech(locale: SpeechLocale): UseTextToSpeechReturn {
 
         const element = new Audio(url);
         audioRef.current = element;
-
-        element.onended = (): void => {
-          if (mountedRef.current) {
-            setStatus('idle');
-            setActiveId(null);
-          }
-          releaseAudio();
-        };
-
+        element.onended = finish;
         element.onerror = (): void => {
           if (mountedRef.current) {
             setError({ code: 'provider-error', message: 'The audio could not be played.' });
-            setStatus('idle');
-            setActiveId(null);
           }
-          releaseAudio();
+          finish();
         };
 
         // On iOS this only succeeds inside a user gesture. speak() is always
-        // called from a tap, so the promise rejecting here means a real fault.
+        // called from a tap, so a rejection here means a real fault.
         await element.play();
         if (mountedRef.current) setStatus('playing');
       } catch (err) {
@@ -137,13 +161,11 @@ export function useTextToSpeech(locale: SpeechLocale): UseTextToSpeechReturn {
           } else {
             setError({ code: speechError.code, message: speechError.message });
           }
-          setStatus('idle');
-          setActiveId(null);
         }
-        releaseAudio();
+        finish();
       }
     },
-    [activeId, status, locale, stop, releaseAudio],
+    [activeId, status, locale, provider, stop, finish],
   );
 
   // Switching language mid-playback would leave the wrong voice talking.
@@ -158,7 +180,10 @@ export function useTextToSpeech(locale: SpeechLocale): UseTextToSpeechReturn {
     status,
     activeId,
     error,
-    unsupported: serverHasNoVoice || registry.resolve(locale) === null,
+    // A missing server key only rules out the paid provider — device
+    // voices keep working for English.
+    unsupported: provider === null || (provider.kind === 'buffer' && serverHasNoVoice),
+    isFree: provider?.kind === 'local',
     speak,
     stop,
     clearError,

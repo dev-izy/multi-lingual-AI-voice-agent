@@ -37,6 +37,16 @@ const PROVIDER_LANG: Record<string, string> = {
   'ha-NE': 'ha',
 };
 
+/**
+ * Voice ids per language, from Spitch Studio → Text to Speech.
+ * Replace these with the real ids before enabling voice output.
+ */
+const VOICES: Record<string, string> = {
+  en: 'REPLACE_ME',
+  yo: 'REPLACE_ME',
+  ha: 'REPLACE_ME',
+};
+
 const LANGUAGE_NAME: Record<string, string> = {
   en: 'English',
   yo: 'Yorùbá',
@@ -266,7 +276,8 @@ async function handleSynthesise(
   if (!body.text?.trim()) throw new Error('BAD:There is no text to read.');
   if (body.text.length > 2000) throw new Error('BAD:That text is too long to read.');
 
-  const voices: Record<string, string> = { en: 'lucy', yo: 'sade', ha: 'hasan' };
+  const voice = VOICES[language];
+  if (!voice) throw new Error(`BAD:No voice configured for ${language}.`);
 
   const response = await fetch('https://api.spi-tch.com/v1/speech', {
     method: 'POST',
@@ -274,13 +285,22 @@ async function handleSynthesise(
       Authorization: `Bearer ${env.SPITCH_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ language, text: body.text, voice: voices[language] ?? 'lucy' }),
+    body: JSON.stringify({ language, text: body.text, voice }),
   });
 
-  if (!response.ok) throw new Error(`Speech provider returned ${response.status}.`);
+  if (!response.ok) {
+    // Their message names the problem — usually an unknown voice or a
+    // field this request got wrong. Never contains the key.
+    const detail = await response.text().catch(() => '');
+    throw new Error(`Speech provider returned ${response.status}: ${detail.slice(0, 300)}`);
+  }
 
+  // Trust the response's own content type rather than assuming WAV — the
+  // provider may return MP3 or Opus, and the browser needs the right one
+  // to play the audio.
+  const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'audio/mpeg';
   const bytes = new Uint8Array(await response.arrayBuffer());
-  return { audioBase64: toBase64(bytes), mimeType: 'audio/wav' };
+  return { audioBase64: toBase64(bytes), mimeType };
 }
 
 /* ------------------------------------------------------------------ *
