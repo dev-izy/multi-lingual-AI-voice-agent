@@ -1,93 +1,153 @@
-import { SpeechError, type SpeechLocale } from '../../types';
-import type { LocalTtsProvider } from './providers';
+import {
+  SpeechError,
+  type SpeechLocale,
+  type TranscriptResult,
+} from '../../types';
+import type { SttProvider, SttSession } from './providers';
 
 /**
- * Speaks English through the device's own voices, at no cost.
- *
- * Deliberately English-only. No mainstream platform ships a Yorùbá or
- * Hausa voice, and `speechSynthesis` does not fail when asked for one —
- * it quietly substitutes an English voice that reads the orthography as
- * mangled English. Restricting this provider means those languages fall
- * through to the paid provider, which actually speaks them.
+ * Requires `@types/dom-speech-recognition` — SpeechRecognition is not in
+ * TypeScript's default DOM lib.
  */
+type RecognitionCtor = new () => SpeechRecognition;
+
+function getRecognitionCtor(): RecognitionCtor | null {
+  const w = window as unknown as {
+    SpeechRecognition?: RecognitionCtor;
+    webkitSpeechRecognition?: RecognitionCtor;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
 
 /**
- * Voices load asynchronously and `getVoices()` is empty on first call in
- * some browsers, so warm the list and keep it fresh.
+ * Chrome lists yo-NG and ha-NG, but the language list is not queryable and
+ * an unsupported locale fails silently by returning English-ish text. This
+ * provider therefore sits *below* the cloud provider in the registry and
+ * is only reached when the cloud path is unavailable (offline, no key).
  */
-let cachedVoices: SpeechSynthesisVoice[] = [];
+const SUPPORTED = new Set<SpeechLocale>(['en-NG', 'en-US', 'yo-NG', 'ha-NG']);
 
-function refreshVoices(): void {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-  cachedVoices = window.speechSynthesis.getVoices();
-}
-
-if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-  refreshVoices();
-  window.speechSynthesis.addEventListener('voiceschanged', refreshVoices);
-}
-
-function pickVoice(locale: SpeechLocale): SpeechSynthesisVoice | null {
-  if (cachedVoices.length === 0) refreshVoices();
-  const english = cachedVoices.filter((voice) => voice.lang.toLowerCase().startsWith('en'));
-  if (english.length === 0) return null;
-
-  // Prefer an exact locale match, then a local (offline) voice, then anything.
-  const exact = english.find((voice) => voice.lang.replace('_', '-') === locale);
-  const local = english.find((voice) => voice.localService);
-  return exact ?? local ?? english[0] ?? null;
-}
-
-export const browserTtsProvider: LocalTtsProvider = {
-  id: 'device',
-  kind: 'local',
+export const browserSttProvider: SttProvider = {
+  id: 'browser',
 
   isAvailable(): boolean {
-    return typeof window !== 'undefined' && 'speechSynthesis' in window;
+    return getRecognitionCtor() !== null;
   },
 
   supportsLocale(locale: SpeechLocale): boolean {
-    // English only — see the note above. Every platform ships English
-    // voices, so this does not check the cache, which may still be empty
-    // on the very first render.
-    return locale.startsWith('en');
+    return SUPPORTED.has(locale);
   },
 
-  speak(text, locale, handlers) {
-    const synth = window.speechSynthesis;
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = pickVoice(locale);
-    if (voice) utterance.voice = voice;
-    utterance.lang = voice?.lang ?? locale;
+  async start(
+    locale: SpeechLocale,
+    onPartial?: (partial: TranscriptResult) => void,
+  ): Promise<SttSession> {
+    const Ctor = getRecognitionCtor();
+    if (!Ctor) {
+      throw new SpeechError('unsupported-browser', 'This browser has no speech recognition.');
+    }
 
-    let finished = false;
+    // Recognition manages its own capture, so we open a parallel stream
+    // purely to drive the amplitude visualiser.
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      stream = null; // Visualiser degrades to a static state; recognition may still work.
+    }
 
-    utterance.onend = (): void => {
-      if (finished) return;
-      finished = true;
-      handlers.onEnd();
+    const recognition = new Ctor();
+    recognition.lang = locale;
+    recognition.interimResults = Boolean(onPartial);
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    let settled = false;
+    let resolveResult: (value: TranscriptResult) => void = () => {};
+    let rejectResult: (reason: SpeechError) => void = () => {};
+
+    const result = new Promise<TranscriptResult>((resolve, reject) => {
+      resolveResult = resolve;
+      rejectResult = reject;
+    });
+
+    const cleanup = (): void => {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      stream?.getTracks().forEach((track) => track.stop());
     };
 
-    utterance.onerror = (event: SpeechSynthesisErrorEvent): void => {
-      if (finished) return;
-      finished = true;
-      // Cancelling fires an error too; that is our own stop(), not a fault.
-      if (event.error === 'canceled' || event.error === 'interrupted') {
-        handlers.onEnd();
-        return;
+    recognition.onresult = (event: SpeechRecognitionEvent): void => {
+      const last = event.results[event.results.length - 1];
+      if (!last) return;
+      const alternative = last[0];
+      if (!alternative) return;
+
+      const payload: TranscriptResult = {
+        text: alternative.transcript.trim(),
+        confidence: Number.isFinite(alternative.confidence) ? alternative.confidence : null,
+        isFinal: last.isFinal,
+        locale,
+      };
+
+      if (last.isFinal) {
+        settled = true;
+        cleanup();
+        resolveResult(payload);
+      } else {
+        onPartial?.(payload);
       }
-      handlers.onError(new SpeechError('provider-error', 'The device could not read that aloud.'));
     };
 
-    // Clear anything still queued from a previous message.
-    synth.cancel();
-    synth.speak(utterance);
+    recognition.onerror = (event: SpeechRecognitionErrorEvent): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectResult(mapRecognitionError(event.error));
+    };
+
+    recognition.onend = (): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectResult(new SpeechError('no-speech', 'No speech was detected.'));
+    };
+
+    recognition.start();
 
     return {
-      stop: () => {
-        finished = true;
-        synth.cancel();
+      result,
+      stream,
+      stop: () => recognition.stop(),
+      abort: () => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          rejectResult(new SpeechError('aborted', 'Recording cancelled.'));
+        }
+        recognition.abort();
       },
     };
   },
 };
+
+function mapRecognitionError(error: SpeechRecognitionErrorCode): SpeechError {
+  switch (error) {
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return new SpeechError('permission-denied', 'Microphone access is blocked.');
+    case 'audio-capture':
+      return new SpeechError('no-microphone', 'No microphone was found.');
+    case 'no-speech':
+      return new SpeechError('no-speech', 'No speech was detected.');
+    case 'network':
+      return new SpeechError('network', 'Speech recognition lost its connection.');
+    case 'language-not-supported':
+      return new SpeechError('unsupported-language', 'This browser cannot recognise that language.');
+    case 'aborted':
+      return new SpeechError('aborted', 'Recording cancelled.');
+    default:
+      return new SpeechError('provider-error', `Speech recognition failed (${error}).`);
+  }
+}
