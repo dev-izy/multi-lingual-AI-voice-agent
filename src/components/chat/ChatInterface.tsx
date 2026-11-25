@@ -262,8 +262,8 @@ export function ChatInterface({ conversationId, onOpenMenu }: ChatInterfaceProps
         </p>
       )}
 
-      <footer
-        className="flex items-end gap-3 px-4 py-4"
+       <footer
+        className="flex items-end gap-3 px-4 pt-4 pb-14"
         style={{ borderTop: '1px solid var(--line)', backgroundColor: 'var(--surface)' }}
       >
         <div className="flex flex-1 items-end gap-2">
